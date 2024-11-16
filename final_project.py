@@ -1,6 +1,6 @@
 import numpy as np
 from pyspark import SparkContext
-from pyspark.sql import SparkSession
+from pyspark.sql import SparkSession, Window
 from pyspark.sql.functions import col, mean, median, mode, max
 from pyspark.ml import Pipeline
 from pyspark.ml.feature import StringIndexer
@@ -103,7 +103,6 @@ credit_card_balance, credit_card_balance_nulls = null_features(credit_card_balan
 installments_payments, installments_payments_nulls = null_features(installments_payments)
 POS_CASH_balance, POS_CASH_balance_nulls = null_features(POS_CASH_balance)
 previous_application, previous_application_nulls = null_features(previous_application)
-# print(previous_application.first())
 
 application = index_string_cols(application)
 bureau = index_string_cols(bureau)
@@ -114,11 +113,29 @@ previous_application = index_string_cols(previous_application)
 
 # Handle remaining missing values
 application = fill_nulls(application, application_nulls, 'mode', 'mean')
-print(application.filter(application[application_nulls[0]].isNull()).count())
+bureau = fill_nulls(bureau, bureau_nulls, 'mode', 'mean')
+bureau_balance = fill_nulls(bureau_balance, bureau_balance_nulls, 'mode', 'mean')
+credit_card_balance = fill_nulls(credit_card_balance, credit_card_balance_nulls, 'mode', 'mean')
+installments_payments = fill_nulls(installments_payments, installments_payments_nulls, 'mode', 'mean')
+POS_CASH_balance = fill_nulls(POS_CASH_balance, POS_CASH_balance_nulls, 'mode', 'mean')
+previous_application = fill_nulls(previous_application, previous_application_nulls, 'mode', 'mean')
+# print(previous_application.filter(previous_application[previous_application_nulls[0]].isNull()).count())
 
 # Feature engineering
 
+# Get most recent previous credit for each loan
+w = Window.partitionBy('SK_ID_CURR')
+bureau = bureau.withColumn('DAYS_CREDIT_MOST_RECENT', max('DAYS_CREDIT').over(w))
+bureau = bureau.where(col('DAYS_CREDIT') == col('DAYS_CREDIT_MOST_RECENT')).drop('DAYS_CREDIT_MOST_RECENT')
+# print(bureau.first())
+
+# Get most recent monthly balance for each credit
+bureau_balance = bureau_balance.where(col('MONTHS_BALANCE') == -1).drop('MONTHS_BALANCE')
+# print(bureau_balance.first())
+
 # Join dataframes
+bureau = bureau.join(bureau_balance, bureau.SK_ID_BUREAU == bureau_balance.SK_ID_BUREAU, 'left')
+print(bureau.first())
 
 # Sampling
 
