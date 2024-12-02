@@ -1,7 +1,7 @@
 import numpy as np
 from pyspark import SparkContext
 from pyspark.sql import SparkSession, Window
-from pyspark.sql.functions import col, mean, median, mode, max
+from pyspark.sql.functions import col, mean, median, mode, max, isnull
 from pyspark.ml import Pipeline
 from pyspark.ml.feature import StringIndexer
 
@@ -12,23 +12,14 @@ def null_features(df):
     features = df.columns
     percents = []
     num_rows = df.count()
-    # print('Feature\tNull Values\tPercent Null')
     for feature in features:
         count = df.where(col(feature).isNull()).count()
         percent = float(count) / num_rows
         percents.append(percent)
-        # print(feature + '\t' + str(count) + '\t' + str(round(percent, 2)))
-    null_features = []
     for i in range(len(features)):
         if percents[i] >= 0.01:
             df = df.drop(features[i])
-        elif percents[i] != 0.0:
-            # Allows for performing operations on specifically these columns later
-            if df.dtypes[df.columns.index(features[i])][1] == 'string':
-                null_features.append(features[i] + '_INDEXED')
-            else:
-                null_features.append(features[i])
-    return df, null_features
+    return df
 
 
 # Use StringIndexer to map any categorical string columns to a set of integer values
@@ -46,33 +37,34 @@ def index_string_cols(df):
     df = df.drop(*to_drop)
     for feature in to_drop:
         df = df.withColumn(feature + '_INDEXED', df[feature + '_INDEXED'].cast('int'))
-        # df = df.withColumnRenamed(feature + '_INDEXED', feature)
     return df
 
 
-def fill_nulls(df, nulls, int_mode, double_mode):
+def fill_nulls(df, int_mode, double_mode):
     fill = {}
-    for feature in nulls:
-        # Workaround for indexed string columns; because StringIndexer has no option to preserve null values, these were
-        # set equal to the number of different labels. This replaces all rows with this value with null.
-        if '_INDEXED' in feature:
-            max_val = df.select(max(feature)).collect()[0][0]
-            df = df.na.replace(max_val, None, feature)
-        if df.dtypes[df.columns.index(feature)][1] == 'integer':
-            if int_mode == 'median':
-                val = df.agg(median(feature)).collect()[0][0]
-            elif int_mode == 'mode':
-                val = df.agg(mode(feature)).collect()[0][0]
+    features = df.columns
+    for feature in features:
+        if df.filter(isnull(col(feature))).count() > 0:
+            # Workaround for indexed string columns; because StringIndexer has no option to preserve null values, these
+            # were set equal to the number of different labels. This replaces all rows with this value with null.
+            if '_INDEXED' in feature:
+                max_val = df.select(max(feature)).collect()[0][0]
+                df = df.na.replace(max_val, None, feature)
+            if df.dtypes[df.columns.index(feature)][1] == 'integer':
+                if int_mode == 'median':
+                    val = df.agg(median(feature)).collect()[0][0]
+                elif int_mode == 'mode':
+                    val = df.agg(mode(feature)).collect()[0][0]
+                else:
+                    val = df.agg(mean(feature)).collect()[0][0]
             else:
-                val = df.agg(mean(feature)).collect()[0][0]
-        else:
-            if double_mode == 'median':
-                val = df.agg(median(feature)).collect()[0][0]
-            elif double_mode == 'mode':
-                val = df.agg(mode(feature)).collect()[0][0]
-            else:
-                val = df.agg(mean(feature)).collect()[0][0]
-        fill[feature] = val
+                if double_mode == 'median':
+                    val = df.agg(median(feature)).collect()[0][0]
+                elif double_mode == 'mode':
+                    val = df.agg(mode(feature)).collect()[0][0]
+                else:
+                    val = df.agg(mean(feature)).collect()[0][0]
+            fill[feature] = val
     df = df.na.fill(fill)
     return df
 
@@ -92,51 +84,67 @@ credit_card_balance = spark.read.csv(input_path + '/credit_card_balance.csv', he
 installments_payments = spark.read.csv(input_path + '/installments_payments.csv', header=True, inferSchema=True)
 POS_CASH_balance = spark.read.csv(input_path + '/POS_CASH_balance.csv', header=True, inferSchema=True)
 previous_application = spark.read.csv(input_path + '/previous_application.csv', header=True, inferSchema=True)
-# print(previous_application.first())
+
+# Drop unneeded columns
+POS_CASH_balance = POS_CASH_balance.drop('SK_ID_CURR')
+credit_card_balance = credit_card_balance.drop('SK_ID_CURR')
+installments_payments = installments_payments.drop('SK_ID_CURR')
 
 # Remove any features with > 1% null values
-application, application_nulls = null_features(application)
-# print(application_nulls)
-bureau, bureau_nulls = null_features(bureau)
-bureau_balance, bureau_balance_nulls = null_features(bureau_balance)
-credit_card_balance, credit_card_balance_nulls = null_features(credit_card_balance)
-installments_payments, installments_payments_nulls = null_features(installments_payments)
-POS_CASH_balance, POS_CASH_balance_nulls = null_features(POS_CASH_balance)
-previous_application, previous_application_nulls = null_features(previous_application)
+application = null_features(application)
+bureau = null_features(bureau)
+bureau_balance = null_features(bureau_balance)
+credit_card_balance = null_features(credit_card_balance)
+installments_payments = null_features(installments_payments)
+POS_CASH_balance = null_features(POS_CASH_balance)
+previous_application = null_features(previous_application)
 
 application = index_string_cols(application)
 bureau = index_string_cols(bureau)
 bureau_balance = index_string_cols(bureau_balance)
 credit_card_balance = index_string_cols(credit_card_balance)
 previous_application = index_string_cols(previous_application)
-# print(previous_application.first())
 
-# Handle remaining missing values
-application = fill_nulls(application, application_nulls, 'mode', 'mean')
-bureau = fill_nulls(bureau, bureau_nulls, 'mode', 'mean')
-bureau_balance = fill_nulls(bureau_balance, bureau_balance_nulls, 'mode', 'mean')
-credit_card_balance = fill_nulls(credit_card_balance, credit_card_balance_nulls, 'mode', 'mean')
-installments_payments = fill_nulls(installments_payments, installments_payments_nulls, 'mode', 'mean')
-POS_CASH_balance = fill_nulls(POS_CASH_balance, POS_CASH_balance_nulls, 'mode', 'mean')
-previous_application = fill_nulls(previous_application, previous_application_nulls, 'mode', 'mean')
-# print(previous_application.filter(previous_application[previous_application_nulls[0]].isNull()).count())
+# Sampling
 
 # Feature engineering
 
-# Get most recent previous credit for each loan
+# Get most recent previous credit for each loan from other institution(s)
 w = Window.partitionBy('SK_ID_CURR')
 bureau = bureau.withColumn('DAYS_CREDIT_MOST_RECENT', max('DAYS_CREDIT').over(w))
 bureau = bureau.where(col('DAYS_CREDIT') == col('DAYS_CREDIT_MOST_RECENT')).drop('DAYS_CREDIT_MOST_RECENT')
-# print(bureau.first())
 
-# Get most recent monthly balance for each credit
-bureau_balance = bureau_balance.where(col('MONTHS_BALANCE') == -1).drop('MONTHS_BALANCE')
-# print(bureau_balance.first())
+# Get most recent monthly balance for each credit from other institution(s)
+w = Window.partitionBy('SK_ID_BUREAU')
+bureau_balance = bureau_balance.withColumn('MONTHS_BALANCE_MOST_RECENT', max('MONTHS_BALANCE').over(w))
+bureau_balance = bureau_balance.where(col('MONTHS_BALANCE') == col('MONTHS_BALANCE_MOST_RECENT'))
+bureau_balance = bureau_balance.drop('MONTHS_BALANCE_MOST_RECENT')
+
+# Get most recent previous credit for each loan from Home Credit
+w = Window.partitionBy('SK_ID_CURR')
+previous_application = previous_application.withColumn('DAYS_DECISION_MOST_RECENT', max('DAYS_DECISION').over(w))
+previous_application = previous_application.where(col('DAYS_DECISION') == col('DAYS_DECISION_MOST_RECENT')).drop('DAYS_DECISION_MOST_RECENT')
+
+# Get most recent POS/cash balance for each previous credit from Home Credit
+w = Window.partitionBy('SK_ID_PREV')
+POS_CASH_balance = POS_CASH_balance.withColumn('MONTHS_BALANCE_MOST_RECENT', max('MONTHS_BALANCE').over(w))
+POS_CASH_balance = POS_CASH_balance.where(col('MONTHS_BALANCE') == col('MONTHS_BALANCE_MOST_RECENT')).drop('MONTHS_BALANCE_MOST_RECENT')
+
+# Get most recent credit card balance for each previous credit from Home Credit
+w = Window.partitionBy('SK_ID_PREV')
+credit_card_balance = credit_card_balance.withColumn('MONTHS_BALANCE_MOST_RECENT', max('MONTHS_BALANCE').over(w))
+credit_card_balance = credit_card_balance.where(col('MONTHS_BALANCE') == col('MONTHS_BALANCE_MOST_RECENT')).drop('MONTHS_BALANCE_MOST_RECENT')
 
 # Join dataframes
-bureau = bureau.join(bureau_balance, bureau.SK_ID_BUREAU == bureau_balance.SK_ID_BUREAU, 'left')
-print(bureau.first())
+bureau = bureau.join(bureau_balance, "SK_ID_BUREAU", 'left')
+application = application.join(bureau, "SK_ID_CURR", 'left')
+application = application.join(previous_application, "SK_ID_CURR", 'left')
 
-# Sampling
+# Handle remaining missing values
+application = fill_nulls(application, 'mode', 'mean')
+credit_card_balance = fill_nulls(credit_card_balance, 'mode', 'mean')
+installments_payments = fill_nulls(installments_payments, 'mode', 'mean')
+POS_CASH_balance = fill_nulls(POS_CASH_balance, 'mode', 'mean')
+previous_application = fill_nulls(previous_application, 'mode', 'mean')
 
 # Feature selection
