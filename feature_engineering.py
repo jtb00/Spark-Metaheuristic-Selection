@@ -1,13 +1,12 @@
 import numpy as np
 from pyspark import SparkContext
 from pyspark.sql import SparkSession, Window
-from pyspark.sql.functions import col, mean, median, mode, max, isnull
+from pyspark.sql.functions import col, mean, median, mode, max, isnull, when, sum
 from pyspark.ml import Pipeline
 from pyspark.ml.feature import StringIndexer
 
 
-# Removes any features with more than 1% missing values, returns modified dataframe and list of features with <1%
-# missing values
+# Removes any features with more than 1% missing values, returns modified dataframe
 def null_features(df):
     features = df.columns
     percents = []
@@ -86,18 +85,28 @@ POS_CASH_balance = spark.read.csv(input_path + '/POS_CASH_balance.csv', header=T
 previous_application = spark.read.csv(input_path + '/previous_application.csv', header=True, inferSchema=True)
 
 # Drop unneeded columns
+
+# These seem to be redundant
+application = application.drop('FLAG_WORK_PHONE', 'REGION_RATING_CLIENT')
+
+# Not needed, will merge with application later
 POS_CASH_balance = POS_CASH_balance.drop('SK_ID_CURR')
 credit_card_balance = credit_card_balance.drop('SK_ID_CURR')
 installments_payments = installments_payments.drop('SK_ID_CURR')
 
 # Remove any features with > 1% null values
+print('Removing features with > 1% null values...')
 application = null_features(application)
+# print(application.columns)
 bureau = null_features(bureau)
+# print(bureau.columns)
 bureau_balance = null_features(bureau_balance)
 credit_card_balance = null_features(credit_card_balance)
-installments_payments = null_features(installments_payments)
+# print(credit_card_balance.columns)
 POS_CASH_balance = null_features(POS_CASH_balance)
+# print(POS_CASH_balance.columns)
 previous_application = null_features(previous_application)
+# print(previous_application.columns)
 
 application = index_string_cols(application)
 bureau = index_string_cols(bureau)
@@ -105,9 +114,16 @@ bureau_balance = index_string_cols(bureau_balance)
 credit_card_balance = index_string_cols(credit_card_balance)
 previous_application = index_string_cols(previous_application)
 
-# Sampling
-
 # Feature engineering
+print('Feature engineering...')
+
+# Combine FLAG_DOCUMENT columns into single column
+doc_cols = ['FLAG_DOCUMENT_2', 'FLAG_DOCUMENT_3', 'FLAG_DOCUMENT_4', 'FLAG_DOCUMENT_5', 'FLAG_DOCUMENT_6',
+            'FLAG_DOCUMENT_7', 'FLAG_DOCUMENT_8', 'FLAG_DOCUMENT_9', 'FLAG_DOCUMENT_10', 'FLAG_DOCUMENT_11',
+            'FLAG_DOCUMENT_12', 'FLAG_DOCUMENT_13', 'FLAG_DOCUMENT_14', 'FLAG_DOCUMENT_15', 'FLAG_DOCUMENT_16',
+            'FLAG_DOCUMENT_17', 'FLAG_DOCUMENT_18', 'FLAG_DOCUMENT_19', 'FLAG_DOCUMENT_20', 'FLAG_DOCUMENT_21']
+application = application.withColumn('FLAG_DOCUMENTS', sum(*[col(x) for x in doc_cols]))
+application.drop(*doc_cols)
 
 # Get most recent previous credit for each loan from other institution(s)
 w = Window.partitionBy('SK_ID_CURR')
@@ -123,28 +139,51 @@ bureau_balance = bureau_balance.drop('MONTHS_BALANCE_MOST_RECENT')
 # Get most recent previous credit for each loan from Home Credit
 w = Window.partitionBy('SK_ID_CURR')
 previous_application = previous_application.withColumn('DAYS_DECISION_MOST_RECENT', max('DAYS_DECISION').over(w))
-previous_application = previous_application.where(col('DAYS_DECISION') == col('DAYS_DECISION_MOST_RECENT')).drop('DAYS_DECISION_MOST_RECENT')
+previous_application = previous_application.where(col('DAYS_DECISION') == col('DAYS_DECISION_MOST_RECENT'))
+previous_application = previous_application.drop('DAYS_DECISION_MOST_RECENT')
 
 # Get most recent POS/cash balance for each previous credit from Home Credit
 w = Window.partitionBy('SK_ID_PREV')
 POS_CASH_balance = POS_CASH_balance.withColumn('MONTHS_BALANCE_MOST_RECENT', max('MONTHS_BALANCE').over(w))
-POS_CASH_balance = POS_CASH_balance.where(col('MONTHS_BALANCE') == col('MONTHS_BALANCE_MOST_RECENT')).drop('MONTHS_BALANCE_MOST_RECENT')
+POS_CASH_balance = POS_CASH_balance.where(col('MONTHS_BALANCE') == col('MONTHS_BALANCE_MOST_RECENT'))
+POS_CASH_balance = POS_CASH_balance.drop('MONTHS_BALANCE_MOST_RECENT')
 
 # Get most recent credit card balance for each previous credit from Home Credit
 w = Window.partitionBy('SK_ID_PREV')
 credit_card_balance = credit_card_balance.withColumn('MONTHS_BALANCE_MOST_RECENT', max('MONTHS_BALANCE').over(w))
-credit_card_balance = credit_card_balance.where(col('MONTHS_BALANCE') == col('MONTHS_BALANCE_MOST_RECENT')).drop('MONTHS_BALANCE_MOST_RECENT')
+credit_card_balance = credit_card_balance.where(col('MONTHS_BALANCE') == col('MONTHS_BALANCE_MOST_RECENT'))
+credit_card_balance = credit_card_balance.drop('MONTHS_BALANCE_MOST_RECENT')
+
+# Get number of payments / missed payments
+cond = (col('DAYS_ENTRY_PAYMENT') > col('DAYS_INSTALMENT')) | (col('AMT_INSTALMENT') > col('AMT_PAYMENT'))
+installments_payments = installments_payments.withColumn('MISSED_PAYMENT', when(cond, 1).otherwise(0))
+installments_payments = installments_payments.groupBy('SK_ID_PREV').agg(sum('MISSED_PAYMENT')
+                                                                        .alias('NUM_MISSED_PAYMENTS'))
 
 # Join dataframes
+print('Joining dataframes...')
 bureau = bureau.join(bureau_balance, "SK_ID_BUREAU", 'left')
 application = application.join(bureau, "SK_ID_CURR", 'left')
+
+# Rename any potentially amiguous features
+POS_CASH_balance = POS_CASH_balance.withColumnRenamed('MONTHS_BALANCE', 'MONTHS_BALANCE_POS_CASH')
+credit_card_balance = credit_card_balance.withColumnRenamed('MONTHS_BALANCE', 'MONTHS_BALANCE_CREDIT_CARD')
+POS_CASH_balance = POS_CASH_balance.withColumnRenamed('NAME_CONTRACT_STATUS', 'NAME_CONTRACT_STATUS_POS_CASH')
+credit_card_balance = credit_card_balance.withColumnRenamed('NAME_CONTRACT_STATUS', 'NAME_CONTRACT_STATUS_CREDIT_CARD')
+previous_application = previous_application.withColumnRenamed('NAME_CONTRACT_STATUS', 'NAME_CONTRACT_STATUS_PREV_APP')
+POS_CASH_balance = POS_CASH_balance.withColumnRenamed('SK_DPD', 'SK_DPD_POS_CASH')
+credit_card_balance = credit_card_balance.withColumnRenamed('SK_DPD', 'SK_DPD_CREDIT_CARD')
+POS_CASH_balance = POS_CASH_balance.withColumnRenamed('SK_DPD_DEF', 'SK_DPD_DEF_POS_CASH')
+credit_card_balance = credit_card_balance.withColumnRenamed('SK_DPD_DEF', 'SK_DPD_DEF_CREDIT_CARD')
+
+previous_application = previous_application.join(POS_CASH_balance, "SK_ID_PREV", 'left')
+previous_application = previous_application.join(credit_card_balance, "SK_ID_PREV", 'left')
+previous_application = previous_application.join(installments_payments, "SK_ID_PREV", 'left')
+for feature in previous_application.columns:
+    if feature in application.columns and feature != 'SK_ID_CURR':
+        previous_application = previous_application.withColumnRenamed(feature, feature + '_PREV')
 application = application.join(previous_application, "SK_ID_CURR", 'left')
 
 # Handle remaining missing values
+print('Handling missing values...')
 application = fill_nulls(application, 'mode', 'mean')
-credit_card_balance = fill_nulls(credit_card_balance, 'mode', 'mean')
-installments_payments = fill_nulls(installments_payments, 'mode', 'mean')
-POS_CASH_balance = fill_nulls(POS_CASH_balance, 'mode', 'mean')
-previous_application = fill_nulls(previous_application, 'mode', 'mean')
-
-# Feature selection
