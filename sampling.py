@@ -3,13 +3,15 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import col, explode, array, lit
 from pyspark.ml.feature import VectorAssembler
 
+
 # Sampling
 
 input_path = '/user/jbedinge/output/fe/*'
 output_path = '/user/jbedinge/output/sampled'
 master = 'yarn'
 
-spark = SparkSession.builder.master(master).appName('Home Credit').getOrCreate()
+spark = (SparkSession.builder.master(master).appName('Home Credit').config('spark.jars', 'approx-smote-1.1.2.jar')
+         .getOrCreate())
 sc = SparkContext.getOrCreate()
 sc.setLogLevel('ERROR')
 

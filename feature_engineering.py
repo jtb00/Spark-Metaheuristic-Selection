@@ -214,4 +214,3 @@ print('Handling missing values...')
 application = fill_nulls(application)
 
 # application.write.option('header', True).mode('overwrite').csv(output_path + '/fe')
-
