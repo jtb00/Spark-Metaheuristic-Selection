@@ -1,0 +1,33 @@
+The code for this project is located in the src folder. To run the code, make sure that
+the input csv files have been downloaded from this link
+(https://www.kaggle.com/competitions/home-credit-default-risk/). Within
+feature_engineering.py, set the string input_path equal to the directory containing the
+csv files, the string output_path to the directory you wish to output to, and master to
+"local" if running the program locally or "yarn" to run it on a cluster with YARN.
+feature_engineering.py performs initial importing and processing of the data, as well as
+feature engineering and joining of DataFrames. sampling.py is responsible for performing
+sampling on the combined DataFrame, and its behavior can be changed by setting
+sample_method to 'undersample' or 'oversample'. feature_selection.py runs a test on five
+different classification models provided by PySpark. The string selection can be set to
+'hill_climb' to use hill climbing, 'simulated_annealing' to perform simulated annealing,
+or 'baseline' to evaluate the predictions made by each model without feature selection.
+Additionally, metric can be set to either 'accuracy' or 'f1'.
+
+A link to the video for this project is given in video_url.txt.
+
+Personally, I feel that experiment was a success. Although results did not always improve
+after dropping the columns suggested by the algorithms, any decrease in F1 score was very
+minor. It is clear that more testing of this method needs to be done, perhaps with
+different datasets, other methods of sampling (such as SMOTE), and different
+classification models such as multi-layer perceptrons or a hybrid model similar to what
+was done for Assignment 4. If more repetitions of these algorithms were performed for
+each classifier, it is likely that we would be able to obtain a more definitive list of
+irrelevant features.
+
+If I were to perform this experiment again, I would alter the metaheuristic algorithms
+such that they would also change the parameters of each model. I was initially
+considering having the implementation for each alternate between generating neighbors by
+dropping columns and changing hyperparameters each iteration, but I ran out of time and
+was unfortunately not able to do this. Personally, I feel that combining this method of
+feature selection with intelligent hyperparameter tuning through metaheuristics could be
+a powerful tool for creating accurate and precise classification models.

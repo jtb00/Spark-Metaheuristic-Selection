@@ -11,7 +11,6 @@ from operator import add
 # Removes any features with more than 1% missing values, returns modified dataframe
 def null_features(df):
     features = df.columns
-    percents = []
     num_rows = df.count()
     for feature in features:
         count = df.where(col(feature).isNull()).count()
@@ -40,14 +39,11 @@ def index_string_cols(df):
 
 
 def fill_nulls(df):
-    # print(df.dtypes)
     fill = {}
     features = df.columns
     features.remove('TARGET')
     features.remove('SK_ID_CURR')
-    # print(features)
     indexeds = [feature for feature in features if '_INDEXED' in feature]
-    # has_nulls = [feature for feature in features if df.filter(isnull(col(feature))).count() > 0]
     modes = df.select([mode(x).alias(x) for x in features])
     means = df.select([mean(x).alias(x) for x in features])
     max_vals = df.select([max(x).alias(x) for x in features])
@@ -96,19 +92,13 @@ installments_payments = installments_payments.drop('SK_ID_CURR')
 # Remove any features with > 1% null values
 print('Removing features with > 1% null values...')
 application = null_features(application)
-# print(application.columns)
 bureau = null_features(bureau)
-# print(bureau.columns)
 bureau_balance = null_features(bureau_balance)
 credit_card_balance = null_features(credit_card_balance)
-# print(credit_card_balance.columns)
 POS_CASH_balance = null_features(POS_CASH_balance)
-# print(POS_CASH_balance.columns)
 previous_application = null_features(previous_application)
-# print(previous_application.columns)
 
 application = index_string_cols(application)
-# print(application.dtypes)
 bureau = index_string_cols(bureau)
 bureau_balance = index_string_cols(bureau_balance)
 credit_card_balance = index_string_cols(credit_card_balance)
@@ -176,9 +166,7 @@ installments_payments = installments_payments.withColumn('NUM_MISSED_PAYMENTS', 
 
 # Join dataframes
 print('Joining dataframes...')
-# print(application.count())
 application = application.join(bureau, "SK_ID_CURR", 'left')
-# print(application.count())
 
 # Rename any potentially amiguous features
 POS_CASH_balance = POS_CASH_balance.withColumnRenamed('MONTHS_BALANCE', 'MONTHS_BALANCE_POS_CASH')
@@ -207,10 +195,9 @@ for feature in previous_application.columns:
         previous_application = previous_application.withColumnRenamed(feature, feature + '_PREV')
 previous_application = previous_application.drop('SK_ID_PREV').cache()
 application = application.join(previous_application, "SK_ID_CURR", 'left')
-# print(application.count())
 
 # Handle remaining missing values
 print('Handling missing values...')
 application = fill_nulls(application)
 
-# application.write.option('header', True).mode('overwrite').csv(output_path + '/fe')
+application.write.option('header', True).mode('overwrite').csv(output_path + '/fe')

@@ -75,48 +75,46 @@ def hill_climb(classifier, metric):
     return x
 
 
-def simulated_annealing(classifier, temp, freeze):
+def simulated_annealing(classifier, metric, temp, freeze):
     x = dict(zip(feature_cols, [1] * len(feature_cols)))
     iter_num = 1
     predictions = predict(classifier, feature_cols)
     score = metrics(predictions, 'f1')
     print(f'F1: {score}')
-    lowest_cost = metrics(predictions, 'num_wrong')
+    high_score = metrics(predictions, metric)
     curr_freeze = freeze
-    print(f'Lowest cost: {lowest_cost}')
+    print(f'Highest score: {high_score}')
     while int(temp) > 0 and curr_freeze > 0:
         print(f'Iteration {iter_num}:')
         neighbors = generate_neighbors(5, x.copy(), 5)
         cols = list(k for k, v in neighbors[0].items() if v == 1)
         predictions = predict(classifier, cols)
-        best_cost = metrics(predictions, 'num_wrong')
-        print(f'Cost: {best_cost}')
+        best_score = metrics(predictions, metric)
+        print(f'Score: {best_score}')
         best_neighbor = neighbors[0]
         rand = np.random.random()
         for i in range(1, len(neighbors)):
             cols = list(k for k, v in neighbors[i].items() if v == 1)
             predictions = predict(classifier, cols)
-            cost = metrics(predictions, 'num_wrong')
-            print(f'Cost: {cost}')
-            if cost < best_cost:
-                best_cost = cost
+            score = metrics(predictions, metric)
+            print(f'Score: {score}')
+            if score > best_score:
+                best_score = score
                 best_neighbor = neighbors[i]
-            elif cost == best_cost and np.random.random() > 0.5:
-                best_cost = cost
+            elif score == best_score and np.random.random() > 0.5:
+                best_score = score
                 best_neighbor = neighbors[i]
-        if best_cost < lowest_cost or (rand < np.exp((lowest_cost - best_cost) / temp) and lowest_cost != best_cost):
+        if best_score > high_score or (rand < np.exp((best_score - high_score) * 200 / temp) and high_score != best_score):
             x = best_neighbor
-            lowest_cost = best_cost
+            high_score = best_score
             curr_freeze = freeze
-            print(f'Lowest Cost: {lowest_cost}')
+            print(f'Highest score: {high_score}')
         else:
             curr_freeze = curr_freeze - 1
         print(f'Freeze: {curr_freeze}')
         temp = temp * 0.95
         print(f'Temperature: {temp}')
         iter_num = iter_num + 1
-    score = metrics(predictions, 'f1')
-    print(f'F1: {score}')
     return x
 
 

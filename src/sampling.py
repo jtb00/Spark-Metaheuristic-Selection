@@ -1,7 +1,12 @@
 from pyspark import SparkContext
-from pyspark.sql import SparkSession
-from pyspark.sql.functions import col, explode, array, lit
-from pyspark.ml.feature import VectorAssembler
+from pyspark.sql import SparkSession, Window
+from pyspark.sql.functions import col, explode, array, lit, rand, row_number
+from pyspark.ml.feature import VectorAssembler, BucketedRandomProjectionLSH
+from pyspark.ml.functions import vector_to_array
+
+
+def extract(row):
+    return (row.id1, row.id2, row.weight, ) + tuple(row.features1.toArray().tolist()) + tuple(row.features2.toArray().tolist())
 
 
 # Sampling
@@ -36,7 +41,5 @@ elif sample_method == 'oversample':
     application_true = application_true.drop('temp')
     application = application_true.union(application_false)
     print(application.count())
-else:
-    print('Performing SMOTE...')
 
 application.write.option('header', True).mode('overwrite').csv(output_path)
